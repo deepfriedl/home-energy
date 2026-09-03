@@ -14,12 +14,13 @@ from home_energy.fpl.client import (
 def make_response(
     payload: dict,
     status: int = 200,
+    text: str = "",
 ) -> MagicMock:
     """Create a mocked aiohttp response."""
     response = MagicMock()
     response.status = status
     response.json = AsyncMock(return_value=payload)
-    response.text = AsyncMock(return_value="")
+    response.text = AsyncMock(return_value=text)
     return response
 
 
@@ -832,3 +833,193 @@ async def test_get_hourly_usage_sends_expected_request(
         "/mobile-hourly-usage"
         in call_args.args[0]
     )
+
+
+@pytest.mark.anyio
+async def test_get_appliance_usage_returns_data(
+    client: FplClient,
+) -> None:
+    """Return the appliance usage data block from FPL."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    appliance_usage_payload = {
+        "data": {
+            "billPeriods": [
+                {
+                    "billPeriod": "1",
+                    "startDate": "2026-07-16",
+                    "endDate": "2026-08-17",
+                    "billingDays": 30,
+                    "kwh": 1639,
+                    "dollars": 262.54,
+                    "categories": [
+                        {
+                            "category": "cooling",
+                            "kwh": 810,
+                            "percentage": 49,
+                        },
+                    ],
+                },
+            ],
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(appliance_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_appliance_usage(
+        "900000001"
+    )
+
+    assert result == appliance_usage_payload["data"]
+
+
+@pytest.mark.anyio
+async def test_get_appliance_usage_sends_expected_request(
+    client: FplClient,
+) -> None:
+    """Send the expected premise and account to the appliance endpoint."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    appliance_usage_payload = {
+        "data": {
+            "billPeriods": [],
+        },
+    }
+
+    session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(appliance_usage_payload),
+        ]
+    )
+
+    client.session = session
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_appliance_usage(
+        "900000001"
+    )
+
+    assert result == {
+        "billPeriods": [],
+    }
+
+    session.post.assert_called_once()
+
+    call_args = session.post.call_args
+
+    assert call_args.kwargs["json"] == {
+        "premiseId": "000555001",
+        "accountNumber": "900000001",
+    }
+
+    assert call_args.kwargs["headers"] == {
+        "jwttoken": "test-jwt",
+    }
+
+    assert (
+        "/900000001/getDisaggResp"
+        in call_args.args[0]
+    )
+
+
+@pytest.mark.anyio
+async def test_get_appliance_usage_requires_premise(
+    client: FplClient,
+) -> None:
+    """Raise an error when FPL does not provide a premise."""
+    account_info_payload = {
+        "data": {},
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    with pytest.raises(
+        FplClientError,
+        match="premise number",
+    ):
+        await client.get_appliance_usage(
+            "900000001"
+        )
+
+
+@pytest.mark.anyio
+async def test_get_appliance_usage_raises_on_http_error(
+    client: FplClient,
+) -> None:
+    """Raise an error when the appliance endpoint fails."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(
+                {},
+                status=503,
+                text="Service unavailable",
+            ),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    with pytest.raises(
+        FplClientError,
+        match=(
+            "Appliance usage request failed with "
+            "HTTP 503: Service unavailable"
+        ),
+    ):
+        await client.get_appliance_usage(
+            "900000001"
+        )
+
+
+@pytest.mark.anyio
+async def test_get_appliance_usage_returns_empty_dict_when_data_missing(
+    client: FplClient,
+) -> None:
+    """Return an empty dictionary when FPL omits appliance data."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    appliance_usage_payload = {}
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(appliance_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_appliance_usage(
+        "900000001"
+    )
+
+    assert result == {}

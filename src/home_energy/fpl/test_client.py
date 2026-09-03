@@ -528,3 +528,307 @@ async def test_get_current_usage_handles_missing_optional_values(
     assert "daily_average_kwh" not in result
     assert "projected_bill" not in result
     assert "latest_daily_usage" not in result
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_parses_list_response(
+    client: FplClient,
+) -> None:
+    """Parse hourly usage when HourlyUsage is a list."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    hourly_usage_payload = {
+        "data": {
+            "HourlyUsage": [
+                {
+                    "hour": "00",
+                    "readTime": "2026-09-01T00:00:00-04:00",
+                    "billingCharged": "0.18",
+                    "kwhActual": "1.21",
+                    "reading": "33852.3257",
+                },
+                {
+                    "hour": "01",
+                    "readTime": "2026-09-01T01:00:00-04:00",
+                    "billingCharged": "0.15",
+                    "kwhActual": "0.98",
+                    "reading": "33853.3057",
+                },
+            ],
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(hourly_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_hourly_usage(
+        "900000001",
+        date(2026, 9, 1),
+    )
+
+    assert result == [
+        {
+            "hour": "00",
+            "read_time": datetime.fromisoformat(
+                "2026-09-01T00:00:00-04:00"
+            ),
+            "billing_charge": "0.18",
+            "kwh": "1.21",
+            "meter_reading": "33852.3257",
+        },
+        {
+            "hour": "01",
+            "read_time": datetime.fromisoformat(
+                "2026-09-01T01:00:00-04:00"
+            ),
+            "billing_charge": "0.15",
+            "kwh": "0.98",
+            "meter_reading": "33853.3057",
+        },
+    ]
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_parses_nested_data_response(
+    client: FplClient,
+) -> None:
+    """Parse hourly usage when HourlyUsage contains a data list."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    hourly_usage_payload = {
+        "data": {
+            "HourlyUsage": {
+                "data": [
+                    {
+                        "hour": "14",
+                        "readTime": "2026-09-01T14:00:00-04:00",
+                        "billingCharged": "0.42",
+                        "kwhActual": "3.17",
+                        "reading": "33875.1257",
+                    },
+                ],
+            },
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(hourly_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_hourly_usage(
+        "900000001",
+        date(2026, 9, 1),
+    )
+
+    assert len(result) == 1
+    assert result[0]["hour"] == "14"
+    assert result[0]["read_time"] == datetime.fromisoformat(
+        "2026-09-01T14:00:00-04:00"
+    )
+    assert result[0]["kwh"] == "3.17"
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_skips_rows_without_read_time(
+    client: FplClient,
+) -> None:
+    """Skip malformed hourly rows that do not contain readTime."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    hourly_usage_payload = {
+        "data": {
+            "HourlyUsage": [
+                {
+                    "hour": "00",
+                    "readTime": "2026-09-01T00:00:00-04:00",
+                    "kwhActual": "1.21",
+                },
+                {
+                    "hour": "01",
+                    "kwhActual": "0.98",
+                },
+                {
+                    "hour": "02",
+                    "readTime": "2026-09-01T02:00:00-04:00",
+                    "kwhActual": "1.05",
+                },
+            ],
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(hourly_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_hourly_usage(
+        "900000001",
+        date(2026, 9, 1),
+    )
+
+    assert len(result) == 2
+    assert result[0]["hour"] == "00"
+    assert result[1]["hour"] == "02"
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_returns_empty_list_when_missing(
+    client: FplClient,
+) -> None:
+    """Return an empty list when FPL provides no hourly data."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    hourly_usage_payload = {
+        "data": {},
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(hourly_usage_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_hourly_usage(
+        "900000001",
+        date(2026, 9, 1),
+    )
+
+    assert result == []
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_requires_premise(
+    client: FplClient,
+) -> None:
+    """Raise an error when FPL does not provide a premise."""
+    account_info_payload = {
+        "data": {},
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    with pytest.raises(
+        FplClientError,
+        match="premise number",
+    ):
+        await client.get_hourly_usage(
+            "900000001",
+            date(2026, 9, 1),
+        )
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_raises_on_http_error(
+    client: FplClient,
+) -> None:
+    """Raise an error when the hourly usage endpoint fails."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    client.session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response({}, status=500),
+        ]
+    )
+    client.jwt_token = "test-jwt"
+
+    with pytest.raises(
+        FplClientError,
+        match="Hourly usage request failed with HTTP 500",
+    ):
+        await client.get_hourly_usage(
+            "900000001",
+            date(2026, 9, 1),
+        )
+
+
+@pytest.mark.anyio
+async def test_get_hourly_usage_sends_expected_request(
+    client: FplClient,
+) -> None:
+    """Send the expected premise and date to the hourly endpoint."""
+    account_info_payload = {
+        "data": {
+            "premiseNumber": "555001",
+        },
+    }
+
+    hourly_usage_payload = {
+        "data": {
+            "HourlyUsage": [],
+        },
+    }
+
+    session = make_session(
+        [
+            make_response(account_info_payload),
+            make_response(hourly_usage_payload),
+        ]
+    )
+
+    client.session = session
+    client.jwt_token = "test-jwt"
+
+    result = await client.get_hourly_usage(
+        "900000001",
+        date(2026, 9, 1),
+    )
+
+    assert result == []
+
+    session.post.assert_called_once()
+
+    call_args = session.post.call_args
+
+    assert call_args.kwargs["json"] == {
+        "premiseNumber": "000555001",
+        "startDate": "09-01-2026",
+    }
+
+    assert call_args.kwargs["headers"] == {
+        "jwttoken": "test-jwt",
+    }
+
+    assert (
+        "/mobile-hourly-usage"
+        in call_args.args[0]
+    )

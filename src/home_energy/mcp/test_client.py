@@ -1,4 +1,9 @@
-"""Test client for the Home Energy MCP server."""
+"""Manual smoke test for the Home Energy MCP server.
+
+This utility intentionally reports only operation status. MCP responses can
+contain account identifiers and household energy data, so use a debugger or a
+private, access-controlled environment when inspecting response bodies.
+"""
 
 import asyncio
 from datetime import date, timedelta
@@ -11,9 +16,7 @@ MCP_URL = "http://127.0.0.1:8000/mcp"
 
 
 async def main() -> None:
-    """Connect to the MCP server and test its tools."""
-    print(f"Connecting to {MCP_URL}...")
-
+    """Exercise core MCP tools without writing customer data to stdout."""
     async with streamable_http_client(MCP_URL) as (
         read_stream,
         write_stream,
@@ -23,72 +26,31 @@ async def main() -> None:
             write_stream,
         ) as session:
             await session.initialize()
-
-            print("Connected to MCP server.")
-            print()
-
             tools_result = await session.list_tools()
+            tool_names = {tool.name for tool in tools_result.tools}
 
-            print("Available tools:")
-
-            for tool in tools_result.tools:
-                print(f"  {tool.name}: {tool.description}")
-
-            print()
-
-            print("Calling get_status()...")
-
-            status_result = await session.call_tool(
+            required_tools = {
                 "get_status",
-                {},
-            )
-
-            print()
-            print("Status result:")
-            print(status_result)
-
-            print()
-            print("Calling get_fpl_current_usage()...")
-
-            current_result = await session.call_tool(
                 "get_fpl_current_usage",
-                {},
-            )
-
-            print()
-            print("Current usage result:")
-            print(current_result)
-
-            usage_date = date.today() - timedelta(days=1)
-
-            print()
-            print(
-                "Calling get_fpl_hourly_usage("
-                f"{usage_date.isoformat()})..."
-            )
-
-            hourly_result = await session.call_tool(
                 "get_fpl_hourly_usage",
-                {
-                    "usage_date": usage_date.isoformat(),
-                },
-            )
-
-            print()
-            print("Hourly usage result:")
-            print(hourly_result)
-
-            print()
-            print("Calling get_fpl_appliance_usage()...")
-
-            appliance_result = await session.call_tool(
                 "get_fpl_appliance_usage",
-                {},
-            )
+            }
+            missing_tools = required_tools - tool_names
+            if missing_tools:
+                raise RuntimeError(
+                    "MCP server is missing expected tools: "
+                    + ", ".join(sorted(missing_tools))
+                )
 
-            print()
-            print("Appliance usage result:")
-            print(appliance_result)
+            await session.call_tool("get_status", {})
+            await session.call_tool("get_fpl_current_usage", {})
+            await session.call_tool(
+                "get_fpl_hourly_usage",
+                {"usage_date": (date.today() - timedelta(days=1)).isoformat()},
+            )
+            await session.call_tool("get_fpl_appliance_usage", {})
+
+    print("MCP smoke test completed successfully.")
 
 
 if __name__ == "__main__":

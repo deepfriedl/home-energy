@@ -65,6 +65,30 @@ def client() -> FplClient:
 
 
 @pytest.mark.anyio
+async def test_get_account_info_does_not_write_response_to_stdout(
+    client: FplClient,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Account metadata retrieval never writes sensitive response data to stdout."""
+    client.session = make_session(
+        [
+            make_response(
+                {
+                    "data": {
+                        "premiseNumber": "555001",
+                        "meterNo": "TEST-METER-01",
+                    },
+                }
+            )
+        ]
+    )
+
+    await client.get_account_info("900000001")
+
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.anyio
 async def test_get_current_usage_parses_complete_response(
     client: FplClient,
 ) -> None:

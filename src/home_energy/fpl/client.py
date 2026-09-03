@@ -222,24 +222,11 @@ class FplClient:
 
         url = ACCOUNT_INFO_URL.format(account=account)
 
-        print(f"DEBUG: Requesting account information from: {url}")
-
         async with session.get(
             url,
             headers=self._headers(),
             timeout=aiohttp.ClientTimeout(total=TIMEOUT_SECONDS),
         ) as response:
-            response_text = await response.text()
-
-            print(
-                f"DEBUG: Account information HTTP status: "
-                f"{response.status}"
-            )
-            print(
-                "DEBUG: Account information response "
-                f"(first 2000 characters): {response_text[:2000]}"
-            )
-
             if response.status != 200:
                 raise FplClientError(
                     f"Account information request failed with "
